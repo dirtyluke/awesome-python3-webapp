@@ -79,7 +79,7 @@ class Model(dict, metaclass=ModelMetaclass):
         value = getattr(self, key, None)
         if value is None:
             field = self.__mappings__[key]
-            if field default is not None:
+            if field.default is not None:
                 value = field.default() if callable(field.default) else field.default
                 logging.debug('using default value for %s: %s' % (key,str(value)))
         return value
@@ -99,3 +99,45 @@ class StringField(Field):
 
     def __init__(self,name=None, primary_key=False, default=None, ddl='varchar(100)'):
         super().__init__(name,ddl,primary_key,default)
+
+class StringField(Field):
+
+    def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
+        super().__init__(name, ddl, primary_key, default)
+
+class ModelMetaclass(type):
+
+    def __new__(cls, name, bases, attrs):
+        if name =='Model':
+            return type.__new__(cls, name, bases, attrs)
+        #获取table名称：
+        tableName = attrs.get('__table__',None) or name
+        logging.info('found model: %s (table: %s)' % (name, tableName))
+        #获取所有的Field和主键名
+        mappings = dict()
+        fields = []
+        primaryKey = None
+        for k,v in attrs.items():
+            if isinstance(v,Field):
+                logging.info('  found mapping: %s ==> %s' % (k,v))
+                mappings[k] = v
+                if v.primary_key:
+                    #找到主键：
+                    if primaryKey:
+                        raise RuntimeError('Duplicate primary key for field: %s' % k)
+                    primaryKey = k
+                else:
+                    fields.append(k)
+        if not primaryKey:
+            raise RuntimeError('Primary key not found.')
+        for k in mappings.keys():
+            attrs.pop(k)
+        escaped_fields = list(map(lambda f:'`%s`' % f, fields))
+        attrs['__mappings__'] = mappings
+        attrs['__table__'] = tableName
+        attrs['__primary_key__'] = primaryKey
+        attrs['__fields__'] = fields
+        attrs['__select__'] = 'select `%s`, %s from `%s`' % \
+                              (primaryKey, ','.join(escaped_fields), tableName)
+        attrs['__insert__'] = 'insert into `%s` (%s,`%s`) values (%s)' % \
+                              (tableName,','.join(escaped_fields),primaryKey, create_args_string(len(escaped_fields)+1))
